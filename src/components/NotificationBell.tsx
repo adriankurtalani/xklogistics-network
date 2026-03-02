@@ -28,9 +28,12 @@ const TYPE_DOT: Record<string, string> = {
 
 interface Props {
   userId: string;
+  /** "right" = dropdown opens leftward (default, good for top-right bars).
+   *  "left"  = dropdown opens rightward (use when bell is inside a left sidebar). */
+  placement?: "left" | "right";
 }
 
-export function NotificationBell({ userId }: Props) {
+export function NotificationBell({ userId, placement = "right" }: Props) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -112,7 +115,7 @@ export function NotificationBell({ userId }: Props) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 z-50 w-80 rounded-xl border border-zinc-200 bg-white shadow-xl">
+        <div className={`absolute top-10 z-50 w-80 rounded-xl border border-zinc-200 bg-white shadow-xl ${placement === "left" ? "left-0" : "right-0"}`}>
           <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
             <p className="text-sm font-semibold text-zinc-900">Njoftimet</p>
             {unread > 0 && (

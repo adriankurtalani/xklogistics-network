@@ -36,8 +36,9 @@ export default function BusinessRequestsPage() {
   const [userId, setUserId]       = useState<string>("");
   const [error, setError]         = useState<string | null>(null);
 
-  const [shipmentTarget, setShipmentTarget] = useState<Request | null>(null);
-  const [reviewTarget, setReviewTarget]     = useState<{ request: Request; transporterId: string; transporterName: string; routeLabel: string } | null>(null);
+  const [shipmentTarget, setShipmentTarget]     = useState<Request | null>(null);
+  const [reviewTarget, setReviewTarget]         = useState<{ request: Request; transporterId: string; transporterName: string; routeLabel: string } | null>(null);
+  const [confirmingShipmentId, setConfirmingShipmentId] = useState<string | null>(null);
 
   useEffect(() => {
     const init = async () => {
@@ -148,6 +149,35 @@ export default function BusinessRequestsPage() {
     for (const s of shipments) map[s.request_id] = s;
     return map;
   }, [shipments]);
+
+  const handleConfirmDelivery = async (shipmentId: string, requestId: string) => {
+    setConfirmingShipmentId(shipmentId);
+    setError(null);
+
+    const now = new Date().toISOString();
+
+    // 1. Mark the shipment as business-confirmed
+    const { error: shipErr } = await supabase
+      .from("shipment_details")
+      .update({ delivery_confirmed: true, delivery_confirmed_at: now })
+      .eq("id", shipmentId);
+
+    if (shipErr) {
+      setError(shipErr.message);
+      setConfirmingShipmentId(null);
+      return;
+    }
+
+    // 2. Close the route — find it via the request
+    const req = requests.find((r) => r.id === requestId);
+    if (req?.route_id) {
+      await supabase.from("routes").update({ status: "completed" }).eq("id", req.route_id);
+    }
+
+    setConfirmingShipmentId(null);
+    const { data } = await supabase.auth.getSession();
+    if (data.session) await fetchData(data.session.user.id);
+  };
 
   const handleShipmentSubmit = async (formData: {
     contact_name: string;
@@ -310,22 +340,96 @@ export default function BusinessRequestsPage() {
                   <div className="mt-4 space-y-3">
                     <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-4 py-4">
                       <p className="mb-4 text-xs font-semibold text-zinc-500">Gjendja e dërgesës</p>
-                      <ShipmentStatusStepper currentStatus={shipment.shipment_status} />
+                      <ShipmentStatusStepper
+                        currentStatus={shipment.shipment_status}
+                        requestAcceptedAt={request.created_at}
+                        shipmentCreatedAt={shipment.created_at}
+                        deliveryConfirmed={shipment.delivery_confirmed}
+                        deliveryConfirmedAt={shipment.delivery_confirmed_at}
+                      />
                     </div>
 
                     {/* Live map — only while driver is in transit */}
                     {route?.status === "in_transit" && (
                       <LiveRouteMap routeId={request.route_id} />
                     )}
-                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                      <div className="mb-2 flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          Detajet e Dërgesës
+
+                    {/* ── Confirm Delivery card ─────────────────────────── */}
+                    {shipment.shipment_status === "dorëzuar" && !shipment.delivery_confirmed && (
+                      <div className="rounded-xl border-2 border-blue-300 bg-blue-50 p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600">
+                            <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-blue-900">
+                              Transportuesi ka shënuar dërgesen si dorëzuar
+                            </p>
+                            <p className="mt-1 text-xs text-blue-700">
+                              Kontrolloni dokumentin <span className="font-medium">Provë Dorëzimi (POD)</span> tek
+                              seksioni i dokumenteve më poshtë, pastaj konfirmoni pranimin e mallit.
+                              Kjo do të mbyllë rrugën dhe do të aktivizojë mundësinë e vlerësimit.
+                            </p>
+                          </div>
                         </div>
-                        {shipment.shipment_status === "dorëzuar" && !myReviews.some((r) => r.request_id === request.id) && (
+                        <div className="mt-4 flex items-center justify-end border-t border-blue-200 pt-4">
+                          <button
+                            type="button"
+                            disabled={confirmingShipmentId === shipment.id}
+                            onClick={() => handleConfirmDelivery(shipment.id, request.id)}
+                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-500 active:scale-95 transition-transform disabled:opacity-60"
+                          >
+                            {confirmingShipmentId === shipment.id ? (
+                              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                            ) : (
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                              </svg>
+                            )}
+                            {confirmingShipmentId === shipment.id ? "Duke konfirmuar..." : "Konfirmo Dorëzimin"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Delivery confirmed banner ─────────────────────── */}
+                    {shipment.delivery_confirmed && (
+                      <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                        <svg className="h-5 w-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-emerald-800">Dorëzimi u konfirmua</p>
+                          {shipment.delivery_confirmed_at && (
+                            <p className="text-xs text-emerald-600">
+                              {new Date(shipment.delivery_confirmed_at).toLocaleString("sq-AL")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <div className={`rounded-lg border p-4 ${shipment.is_locked ? "border-zinc-200 bg-zinc-50" : "border-emerald-200 bg-emerald-50"}`}>
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className={`flex items-center gap-2 text-xs font-semibold ${shipment.is_locked ? "text-zinc-600" : "text-emerald-700"}`}>
+                          {shipment.is_locked ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m0 0v2m0-2h2m-2 0H10m6-8V7a4 4 0 10-8 0v2M5 21h14a2 2 0 002-2v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                            </svg>
+                          ) : (
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          )}
+                          Detajet e Dërgesës
+                          {shipment.is_locked && (
+                            <span className="ml-1 rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-500">
+                              Bllokuar
+                            </span>
+                          )}
+                        </div>
+                        {shipment.delivery_confirmed && !myReviews.some((r) => r.request_id === request.id) && (
                           <button
                             type="button"
                             onClick={() => {
@@ -347,7 +451,11 @@ export default function BusinessRequestsPage() {
                         {shipment.notes && <p className="md:col-span-2"><span className="text-zinc-500">Shënime:</span> <span className="font-medium">{shipment.notes}</span></p>}
                       </div>
                     </div>
-                    <DocumentSection shipmentId={shipment.id} uploaderId={userId} />
+                    <DocumentSection
+                      shipmentId={shipment.id}
+                      uploaderId={userId}
+                      isLocked={!!shipment.is_locked}
+                    />
                   </div>
                 )}
 

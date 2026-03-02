@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { GPSTracker } from "@/lib/gpsTracker";
-import type { GPSPoint, OnPermission } from "@/lib/gpsTracker";
+import type { GPSPoint, OnPermission, SpoofEvent, SpoofReason } from "@/lib/gpsTracker";
 
 export type PermissionState = "idle" | "requesting" | "granted" | "denied";
 
@@ -14,7 +14,20 @@ export interface TrackingState {
   error: string | null;
   /** Supabase INSERT errors — separate so the UI can show them distinctly */
   uploadError: string | null;
+  /** Number of suspicious GPS readings flagged since tracking started. */
+  spoofWarnings: number;
+  /** Most recent spoof event (reason + implied speed), or null if clean. */
+  lastSpoofEvent: SpoofEvent | null;
+  /** True when the tracker was auto-stopped due to repeated suspicious readings. */
+  spoofBlocked: boolean;
 }
+
+/** Human-readable descriptions for each spoof reason shown in the UI. */
+export const SPOOF_REASON_LABELS: Record<SpoofReason, string> = {
+  impossible_coordinates: "Coordinates outside physical bounds",
+  position_jump:         "Impossible position jump detected",
+  speed_anomaly:         "Unrealistic speed detected",
+};
 
 /**
  * useDriverTracking
@@ -27,12 +40,15 @@ export function useDriverTracking(routeId: string, transporterId: string) {
   const trackerRef = useRef<GPSTracker | null>(null);
 
   const [state, setState] = useState<TrackingState>({
-    active:      false,
-    permission:  "idle",
-    lastPoint:   null,
-    pointCount:  0,
-    error:       null,
-    uploadError: null,
+    active:         false,
+    permission:     "idle",
+    lastPoint:      null,
+    pointCount:     0,
+    error:          null,
+    uploadError:    null,
+    spoofWarnings:  0,
+    lastSpoofEvent: null,
+    spoofBlocked:   false,
   });
 
   // ── Upload a smoothed point ──────────────────────────────────────────────
@@ -83,17 +99,39 @@ export function useDriverTracking(routeId: string, transporterId: string) {
     }));
   }, []);
 
+  // ── Spoof warning callback (individual suspicious reading) ────────────────
+  const handleSpoofWarning = useCallback((event: SpoofEvent) => {
+    setState((prev) => ({
+      ...prev,
+      spoofWarnings:  prev.spoofWarnings + 1,
+      lastSpoofEvent: event,
+    }));
+  }, []);
+
+  // ── Spoof detected callback (tracker auto-stopped after repeated flags) ───
+  const handleSpoofDetected = useCallback((event: SpoofEvent) => {
+    setState((prev) => ({
+      ...prev,
+      active:         false,
+      spoofBlocked:   true,
+      lastSpoofEvent: event,
+    }));
+  }, []);
+
   // ── Start ────────────────────────────────────────────────────────────────
   const startTracking = useCallback(async () => {
     if (trackerRef.current?.isRunning) return;
 
     setState((prev) => ({
       ...prev,
-      error:       null,
-      uploadError: null,
-      pointCount:  0,
-      lastPoint:   null,
-      permission:  "requesting",
+      error:          null,
+      uploadError:    null,
+      pointCount:     0,
+      lastPoint:      null,
+      permission:     "requesting",
+      spoofWarnings:  0,
+      lastSpoofEvent: null,
+      spoofBlocked:   false,
     }));
 
     const tracker = new GPSTracker(
@@ -111,11 +149,13 @@ export function useDriverTracking(routeId: string, transporterId: string) {
         }));
       },
       handlePermission,
+      handleSpoofWarning,
+      handleSpoofDetected,
     );
 
     trackerRef.current = tracker;
     await tracker.start();
-  }, [uploadPoint, handlePermission]);
+  }, [uploadPoint, handlePermission, handleSpoofWarning, handleSpoofDetected]);
 
   // ── Stop ─────────────────────────────────────────────────────────────────
   const stopTracking = useCallback(() => {

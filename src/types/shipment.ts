@@ -16,5 +16,16 @@ export interface ShipmentDetails {
   notes?: string | null;
   weight_kg?: number | null;
   shipment_status: ShipmentStatus;
+  /**
+   * Set to true automatically when shipment_status transitions to "dorëzuar".
+   * Once true, weight, pickup_address, and documents become read-only for all parties.
+   */
+  is_locked?: boolean;
+  /**
+   * Set to true by the business after verifying the Proof of Delivery document.
+   * Triggers automatic route closure (routes.status → "completed").
+   */
+  delivery_confirmed?: boolean;
+  delivery_confirmed_at?: string | null;
   created_at?: string;
 }

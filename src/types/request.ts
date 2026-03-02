@@ -1,4 +1,4 @@
-export type RequestStatus = "pending" | "accepted" | "rejected";
+export type RequestStatus = "pending" | "accepted" | "rejected" | "expired";
 
 export interface Request {
   id: string;

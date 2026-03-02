@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useDriverTracking } from "@/hooks/useDriverTracking";
+import { useDriverTracking, SPOOF_REASON_LABELS } from "@/hooks/useDriverTracking";
 
 // Key written to localStorage so GPS auto-restarts after a page refresh
 const LS_KEY = "xkl_active_gps_route";
@@ -75,6 +75,40 @@ export function TrackingActivator({ routeId, transporterId }: Props) {
     );
   }
 
+  // ── Spoof blocked — tracker auto-stopped after repeated suspicious readings ─
+  if (state.spoofBlocked) {
+    return (
+      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+        <div className="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-red-600" fill="none"
+            viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round"
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <p className="font-semibold">GPS tracking blocked — suspicious activity</p>
+        </div>
+        {state.lastSpoofEvent && (
+          <p className="mt-1 text-red-600">
+            {SPOOF_REASON_LABELS[state.lastSpoofEvent.reason]}
+            {state.lastSpoofEvent.impliedSpeedKmh != null && (
+              <> ({Math.round(state.lastSpoofEvent.impliedSpeedKmh)} km/h implied)</>
+            )}
+          </p>
+        )}
+        <p className="mt-1 text-red-500">
+          {state.spoofWarnings} suspicious reading{state.spoofWarnings !== 1 ? "s" : ""} flagged before block.
+        </p>
+        <button
+          type="button"
+          onClick={handleStart}
+          className="mt-2 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   // ── Hard GPS error (not an upload error) ─────────────────────────────────
   if (state.error && !state.active) {
     return (
@@ -120,6 +154,30 @@ export function TrackingActivator({ routeId, transporterId }: Props) {
           <div className="flex items-center gap-2 rounded-md bg-sky-50 px-3 py-1.5 text-xs text-sky-700">
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-sky-400" />
             Acquiring GPS fix… (may take up to 20 s)
+          </div>
+        )}
+
+        {/* Spoof warning — shown whenever ≥1 suspicious reading has been flagged */}
+        {state.spoofWarnings > 0 && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+            <div className="flex items-center gap-1.5">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 shrink-0 text-amber-600" fill="none"
+                viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <span className="font-semibold">
+                {state.spoofWarnings} suspicious reading{state.spoofWarnings !== 1 ? "s" : ""} flagged
+              </span>
+            </div>
+            {state.lastSpoofEvent && (
+              <p className="mt-0.5 text-amber-700">
+                Last: {SPOOF_REASON_LABELS[state.lastSpoofEvent.reason]}
+                {state.lastSpoofEvent.impliedSpeedKmh != null && (
+                  <> — {Math.round(state.lastSpoofEvent.impliedSpeedKmh)} km/h implied</>
+                )}
+              </p>
+            )}
           </div>
         )}
 

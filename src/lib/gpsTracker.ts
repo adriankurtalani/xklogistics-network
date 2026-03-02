@@ -8,9 +8,34 @@ export interface GPSPoint {
   ts: number;             // Date.now()
 }
 
-export type OnPoint = (point: GPSPoint) => void;
-export type OnError = (error: GeolocationPositionError) => void;
+// ---------------------------------------------------------------------------
+// Anti-spoofing types
+// ---------------------------------------------------------------------------
+
+/** Reason a GPS reading was flagged as suspicious. */
+export type SpoofReason =
+  | "impossible_coordinates" // lat/lng outside physical bounds
+  | "position_jump"          // teleportation: > MAX_JUMP_KM in < MAX_JUMP_SECS
+  | "speed_anomaly";         // implied speed between points exceeds MAX_SPEED_KMH
+
+export interface SpoofEvent {
+  reason: SpoofReason;
+  /** Calculated speed in km/h between last clean point and flagged point (null for coord errors). */
+  impliedSpeedKmh: number | null;
+  /** The raw coordinates that were rejected. */
+  rawLat: number;
+  rawLng: number;
+  /** How many consecutive flags have been raised (resets on a clean reading). */
+  consecutiveCount: number;
+}
+
+export type OnPoint      = (point: GPSPoint) => void;
+export type OnError      = (error: GeolocationPositionError) => void;
 export type OnPermission = (state: "granted" | "denied" | "requesting") => void;
+/** Called every time a point is flagged as suspicious (but not yet blocked). */
+export type OnSpoofWarning  = (event: SpoofEvent) => void;
+/** Called when MAX_CONSECUTIVE_FLAGS bad readings arrive in a row — tracker auto-stops. */
+export type OnSpoofDetected = (lastEvent: SpoofEvent) => void;
 
 // ---------------------------------------------------------------------------
 // Kalman filter — one-dimensional, applied independently to lat and lng
@@ -83,6 +108,26 @@ const MAX_ACCURACY_M = 5000;
  */
 const MIN_MOVE_M = 5;
 
+// ---------------------------------------------------------------------------
+// Anti-spoofing thresholds
+// ---------------------------------------------------------------------------
+
+/** Maximum physically plausible road speed (sports car absolute limit). */
+const MAX_SPEED_KMH = 250;
+
+/**
+ * Maximum legitimate position jump within the short-window check.
+ * 50 km in under MAX_JUMP_SECS seconds is physically impossible on any road.
+ */
+const MAX_JUMP_KM   = 50;
+const MAX_JUMP_SECS = 30;
+
+/**
+ * After this many consecutive flagged readings the tracker auto-stops and
+ * fires onSpoofDetected. Resets to 0 on any clean reading.
+ */
+const MAX_CONSECUTIVE_FLAGS = 3;
+
 export class GPSTracker {
   private watchId: number | null = null;
   private kalmanLat: KalmanState | null = null;
@@ -90,6 +135,8 @@ export class GPSTracker {
   private lastEmittedPoint: GPSPoint | null = null;
   private lastEmitTs = 0;
   private lastRawTs = 0;
+  /** Consecutive suspicious-reading counter — resets on any clean point. */
+  private consecutiveFlags = 0;
   /** Fired once as soon as the browser delivers any position (= permission granted). */
   private permissionNotified = false;
 
@@ -97,6 +144,8 @@ export class GPSTracker {
     private readonly onPoint: OnPoint,
     private readonly onError: OnError,
     private readonly onPermission: OnPermission,
+    private readonly onSpoofWarning?: OnSpoofWarning,
+    private readonly onSpoofDetected?: OnSpoofDetected,
   ) {}
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -148,6 +197,7 @@ export class GPSTracker {
     this.lastEmittedPoint = null;
     this.lastEmitTs = 0;
     this.lastRawTs = 0;
+    this.consecutiveFlags = 0;
     this.permissionNotified = false;
   }
 
@@ -156,6 +206,26 @@ export class GPSTracker {
   }
 
   // ── Private ───────────────────────────────────────────────────────────────
+
+  // ── Anti-spoofing helpers ─────────────────────────────────────────────────
+
+  /** Raise a spoof warning; auto-stop and fire onSpoofDetected after MAX_CONSECUTIVE_FLAGS. */
+  private flagSuspiciousPoint(event: SpoofEvent): void {
+    console.warn(
+      `[GPS] Suspicious point flagged (${event.reason}) — ` +
+      `implied speed: ${event.impliedSpeedKmh != null ? Math.round(event.impliedSpeedKmh) + " km/h" : "N/A"}, ` +
+      `raw: (${event.rawLat.toFixed(5)}, ${event.rawLng.toFixed(5)}), ` +
+      `consecutive: ${event.consecutiveCount}`,
+    );
+    this.onSpoofWarning?.(event);
+    if (event.consecutiveCount >= MAX_CONSECUTIVE_FLAGS) {
+      console.error("[GPS] Auto-stopping — too many consecutive suspicious readings.");
+      this.onSpoofDetected?.(event);
+      this.stop();
+    }
+  }
+
+  // ── Core position handler ─────────────────────────────────────────────────
 
   private handlePosition(pos: GeolocationPosition): void {
     const { latitude, longitude, accuracy, speed, heading, altitude } = pos.coords;
@@ -171,12 +241,26 @@ export class GPSTracker {
     // 2. Reject low-accuracy / junk readings (still filter for uploads)
     if (accuracy > MAX_ACCURACY_M) return;
 
-    // 3. Kalman-smooth the coordinates
+    // 3. ── Anti-spoofing Layer 1: Impossible coordinate bounds ────────────────
+    //    Physical limits: lat ∈ [-90, 90], lng ∈ [-180, 180].
+    //    Any value outside these is a hard proof of tampering.
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      this.consecutiveFlags++;
+      this.flagSuspiciousPoint({
+        reason: "impossible_coordinates",
+        impliedSpeedKmh: null,
+        rawLat: latitude,
+        rawLng: longitude,
+        consecutiveCount: this.consecutiveFlags,
+      });
+      return;
+    }
+
+    // 4. Kalman-smooth the coordinates
     const dtMs = this.lastRawTs ? now - this.lastRawTs : 1_000;
     this.lastRawTs = now;
 
     if (!this.kalmanLat || !this.kalmanLng) {
-      // First valid reading — seed the filter
       this.kalmanLat = { value: latitude, variance: accuracy * accuracy };
       this.kalmanLng = { value: longitude, variance: accuracy * accuracy };
     } else {
@@ -187,11 +271,11 @@ export class GPSTracker {
     const smoothedLat = this.kalmanLat.value;
     const smoothedLng = this.kalmanLng.value;
 
-    // 3. Rate-limit emissions — skip for the very first point so map loads immediately
+    // 5. Rate-limit emissions — skip for the very first point so map loads immediately
     const isFirstPoint = this.lastEmitTs === 0;
     if (!isFirstPoint && now - this.lastEmitTs < EMIT_INTERVAL_MS) return;
 
-    // 4. Skip if driver hasn't moved enough — but always send the very first point
+    // 6. Skip if driver hasn't moved enough — but always send the very first point
     if (
       this.lastEmittedPoint &&
       haversineM(
@@ -201,7 +285,51 @@ export class GPSTracker {
     ) {
       return;
     }
-    // Always emit the first point immediately so the business map shows something
+
+    // 7. ── Anti-spoofing Layer 2 & 3: Speed anomaly + Position jump ───────────
+    //    Compare the new smoothed point against the last emitted (Kalman-filtered)
+    //    point. Using the emitted point (not every raw reading) prevents GPS
+    //    jitter from generating false positives.
+    if (this.lastEmittedPoint) {
+      const distM = haversineM(
+        this.lastEmittedPoint.lat, this.lastEmittedPoint.lng,
+        smoothedLat, smoothedLng,
+      );
+      const dtSec = (now - this.lastEmittedPoint.ts) / 1000;
+      const impliedSpeedKmh = dtSec > 0 ? (distM / dtSec) * 3.6 : Infinity;
+      const distKm = distM / 1000;
+
+      // Layer 2 — Position jump: > MAX_JUMP_KM in < MAX_JUMP_SECS seconds.
+      // Even a helicopter (≈300 km/h) couldn't cover 50 km in 30 seconds.
+      if (distKm > MAX_JUMP_KM && dtSec < MAX_JUMP_SECS) {
+        this.consecutiveFlags++;
+        this.flagSuspiciousPoint({
+          reason: "position_jump",
+          impliedSpeedKmh,
+          rawLat: latitude,
+          rawLng: longitude,
+          consecutiveCount: this.consecutiveFlags,
+        });
+        return;
+      }
+
+      // Layer 3 — Speed anomaly: implied speed between two Kalman-smoothed
+      // points exceeds the maximum physically plausible road speed.
+      if (impliedSpeedKmh > MAX_SPEED_KMH) {
+        this.consecutiveFlags++;
+        this.flagSuspiciousPoint({
+          reason: "speed_anomaly",
+          impliedSpeedKmh,
+          rawLat: latitude,
+          rawLng: longitude,
+          consecutiveCount: this.consecutiveFlags,
+        });
+        return;
+      }
+    }
+
+    // 8. Clean reading — reset the consecutive flag counter
+    this.consecutiveFlags = 0;
 
     const point: GPSPoint = {
       lat: smoothedLat,

@@ -10,5 +10,7 @@ export interface User {
   address?: string | null;
   created_at?: string;
   is_suspended?: boolean;
+  /** Set to true by an admin after all verification documents are approved. */
+  is_verified?: boolean;
 }
 

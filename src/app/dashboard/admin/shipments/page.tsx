@@ -195,7 +195,13 @@ export default function AdminShipmentsPage() {
                     {/* Shipment details + stepper */}
                     {shipment ? (
                       <div className="space-y-3">
-                        <ShipmentStatusStepper currentStatus={shipment.shipment_status} />
+                        <ShipmentStatusStepper
+                          currentStatus={shipment.shipment_status}
+                          requestAcceptedAt={req.created_at}
+                          shipmentCreatedAt={shipment.created_at}
+                          deliveryConfirmed={shipment.delivery_confirmed}
+                          deliveryConfirmedAt={shipment.delivery_confirmed_at}
+                        />
                         <div className="grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 text-zinc-700">
                           <p><span className="text-zinc-500">Kontakti:</span> {shipment.contact_name}</p>
                           <p><span className="text-zinc-500">Telefoni:</span> {shipment.contact_phone}</p>

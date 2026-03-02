@@ -6,13 +6,3 @@ export async function register() {
     await import("./sentry.edge.config");
   }
 }
-
-export const onRequestError = async (
-  err: unknown,
-  request: { path: string; method: string },
-  context: { routerKind: string },
-) => {
-  // Dynamically import Sentry so it's not bundled in the browser
-  const { captureRequestError } = await import("@sentry/nextjs");
-  captureRequestError(err, request, context);
-};

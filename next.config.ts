@@ -7,18 +7,15 @@ const nextConfig: NextConfig = {
 };
 
 export default withSentryConfig(nextConfig, {
-  // Sentry webpack plugin options
   org:     process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT,
 
-  // Automatically instrument server-side code
-  autoInstrumentServerFunctions: true,
+  // Upload source maps only in CI/production builds that have an auth token
+  silent:        !process.env.SENTRY_AUTH_TOKEN,
+  authToken:     process.env.SENTRY_AUTH_TOKEN,
 
-  // Upload source maps only in CI/production
-  silent: process.env.NODE_ENV !== "production",
-
-  // Disable source map upload if Sentry isn't configured
-  // (prevents build failure when SENTRY_AUTH_TOKEN is absent)
-  disableClientWebpackPlugin:  !process.env.SENTRY_AUTH_TOKEN,
-  disableServerWebpackPlugin:  !process.env.SENTRY_AUTH_TOKEN,
+  // Suppress the deprecation warning — we don't use autoInstrumentServerFunctions
+  webpack: {
+    autoInstrumentServerFunctions: false,
+  },
 });

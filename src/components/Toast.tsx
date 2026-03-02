@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 
-type ToastVariant = "success" | "error" | "info";
+type ToastVariant = "success" | "error" | "info" | "warning";
 
 interface Toast {
   id: string;
@@ -52,8 +52,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const variantStyles: Record<ToastVariant, string> = {
     success: "bg-emerald-800 text-white",
-    error: "bg-red-700 text-white",
-    info: "bg-zinc-900 text-white",
+    error:   "bg-red-700 text-white",
+    info:    "bg-zinc-900 text-white",
+    warning: "bg-amber-500 text-white",
   };
 
   return (

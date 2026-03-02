@@ -1,4 +1,4 @@
-type StatusVariant = "available" | "in_transit" | "completed" | "pending" | "accepted" | "rejected";
+type StatusVariant = "available" | "in_transit" | "completed" | "pending" | "accepted" | "rejected" | "expired";
 
 interface StatusBadgeProps {
   variant: StatusVariant;
@@ -11,6 +11,7 @@ const VARIANT_STYLES: Record<StatusVariant, string> = {
   pending: "bg-sky-50 text-sky-700",
   accepted: "bg-emerald-50 text-emerald-700",
   rejected: "bg-red-50 text-red-700",
+  expired: "bg-zinc-100 text-zinc-400",
 };
 
 const VARIANT_LABELS: Record<StatusVariant, string> = {
@@ -20,6 +21,7 @@ const VARIANT_LABELS: Record<StatusVariant, string> = {
   pending: "Pending",
   accepted: "Accepted",
   rejected: "Rejected",
+  expired: "Skaduar",
 };
 
 export function StatusBadge({ variant }: StatusBadgeProps) {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { createClient } from "@supabase/supabase-js";
+import { cache } from "react";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,7 +14,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-async function getPlatformBranding() {
+const getPlatformBranding = cache(async function getPlatformBranding() {
   try {
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
@@ -38,15 +39,14 @@ async function getPlatformBranding() {
   } catch {
     return { title: "XK Logistics", faviconUrl: null };
   }
-}
+});
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { title, faviconUrl } = await getPlatformBranding();
+  const { title } = await getPlatformBranding();
   return {
     title,
     description:
       "Rrjeti i koordinimit logjistik që lidh transportuesit dhe bizneset përgjatë korridorit BE–Kosovë.",
-    ...(faviconUrl && { icons: { icon: faviconUrl } }),
   };
 }
 
@@ -55,8 +55,18 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { faviconUrl } = await getPlatformBranding();
+
   return (
     <html lang="en">
+      <head>
+        {faviconUrl && (
+          <>
+            <link rel="icon" href={faviconUrl} />
+            <link rel="shortcut icon" href={faviconUrl} />
+          </>
+        )}
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

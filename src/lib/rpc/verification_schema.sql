@@ -41,16 +41,34 @@ CREATE INDEX IF NOT EXISTS idx_vdoc_transporter
 ALTER TABLE verification_documents ENABLE ROW LEVEL SECURITY;
 
 -- Transporters can read and upsert their own documents
-CREATE POLICY IF NOT EXISTS "transporters_own_docs"
+DROP POLICY IF EXISTS "transporters_own_docs" ON verification_documents;
+CREATE POLICY "transporters_own_docs"
   ON verification_documents
   FOR ALL
   TO authenticated
   USING  (transporter_id = auth.uid())
   WITH CHECK (transporter_id = auth.uid());
 
--- Admins can read everything (checked via a join — no separate policy needed
--- because admin pages use SECURITY DEFINER RPCs or direct select with service key;
--- if you use the anon key from the browser for admin pages add a policy here).
+-- Admins can read and update every document (admin verification page queries directly)
+DROP POLICY IF EXISTS "admins_all_docs" ON verification_documents;
+CREATE POLICY "admins_all_docs"
+  ON verification_documents
+  FOR ALL
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = auth.uid()
+        AND users.role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM users
+      WHERE users.id = auth.uid()
+        AND users.role = 'admin'
+    )
+  );
 
 -- 6. Supabase Storage bucket
 --    Create manually in Supabase Dashboard → Storage → New bucket:
